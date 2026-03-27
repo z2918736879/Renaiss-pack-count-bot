@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 from collections import defaultdict
 
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
@@ -285,32 +285,50 @@ async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def setstart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /setstart          — 從現在開始（清空累計，只記新卡）
-    /setstart 2026-03-27       — 從指定日期起算
-    /setstart all      — 計算全部歷史
+    /setstart                        — 從現在開始
+    /setstart 2026-03-27             — 指定日期（當天 00:00 UTC+8）
+    /setstart 2026-03-27 15:30       — 指定日期 + 時間（UTC+8）
+    /setstart all                    — 計算全部歷史
     """
     chat_id = update.effective_chat.id
     args    = context.args
 
     if not args or args[0].lower() == "now":
         cutoff = int(datetime.now(tz=timezone.utc).timestamp())
-        label  = "現在"
+        label  = datetime.now(tz=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
+
     elif args[0].lower() == "all":
         cutoff = 0
         label  = "全部歷史"
+
     else:
-        try:
-            dt     = datetime.strptime(args[0], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            cutoff = int(dt.timestamp())
-            label  = args[0]
-        except ValueError:
+        # 組合參數（允許 "2026-03-27 15:30" 分成兩個 args）
+        raw = " ".join(args)
+        dt  = None
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                dt = datetime.strptime(raw, fmt)
+                break
+            except ValueError:
+                continue
+
+        if dt is None:
             await update.message.reply_text(
-                "格式錯誤！\n"
-                "/setstart now — 從現在起\n"
-                "/setstart 2026-03-27 — 從指定日期\n"
-                "/setstart all — 全部歷史"
+                "❌ 格式錯誤，支援以下格式：\n\n"
+                "<code>/setstart now</code>  — 從現在起\n"
+                "<code>/setstart 2026-03-27</code>  — 指定日期\n"
+                "<code>/setstart 2026-03-27 15:30</code>  — 精確到分鐘\n"
+                "<code>/setstart all</code>  — 全部歷史\n\n"
+                "<i>時間以 UTC+8 為準</i>",
+                parse_mode=ParseMode.HTML,
             )
             return
+
+        # 以 UTC+8 解析（轉換為 UTC 時間戳）
+        from datetime import timedelta
+        dt_utc8 = dt.replace(tzinfo=timezone(timedelta(hours=8)))
+        cutoff  = int(dt_utc8.timestamp())
+        label   = dt_utc8.strftime("%Y-%m-%d %H:%M")  + " (UTC+8)"
 
     # 重置狀態
     _state.pop(chat_id, None)
@@ -338,6 +356,48 @@ async def setstart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """顯示確認按鈕，防止誤觸。"""
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ 確認清除", callback_data="confirm_reset"),
+        InlineKeyboardButton("❌ 取消",     callback_data="cancel_reset"),
+    ]])
+    await update.message.reply_text(
+        "⚠️ <b>確定要清除所有儲存的資料嗎？</b>\n\n"
+        "這將會：\n"
+        "• 刪除 state.json\n"
+        "• 清空兩個卡機的累計數據\n"
+        "• 重新從頭抓取\n\n"
+        "此操作<b>無法復原</b>。",
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard,
+    )
+
+
+async def reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+
+    if query.data == "confirm_reset":
+        # 停止 job
+        for job in context.job_queue.get_jobs_by_name(str(chat_id)):
+            job.schedule_removal()
+
+        # 清除狀態
+        _state.pop(chat_id, None)
+        delete_state()
+
+        await query.edit_message_text(
+            "🗑 <b>資料已清除！</b>\n\n"
+            "使用 /start 重新開始監控。",
+            parse_mode=ParseMode.HTML,
+        )
+
+    elif query.data == "cancel_reset":
+        await query.edit_message_text("✅ 已取消，資料保留。")
+
+
 # ── 啟動 ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -349,6 +409,8 @@ def main():
     app.add_handler(CommandHandler("start",    start_cmd))
     app.add_handler(CommandHandler("stop",     stop_cmd))
     app.add_handler(CommandHandler("setstart", setstart_cmd))
+    app.add_handler(CommandHandler("reset",    reset_cmd))
+    app.add_handler(CallbackQueryHandler(reset_callback, pattern="^(confirm|cancel)_reset$"))
 
     print(f"✅  Bot 已啟動（每 {POLL_INTERVAL} 秒輪詢），Ctrl+C 停止")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
