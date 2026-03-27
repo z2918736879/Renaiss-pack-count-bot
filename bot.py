@@ -1,6 +1,8 @@
 import os
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+TZ_UTC8 = timezone(timedelta(hours=8))
 from collections import defaultdict
 
 from dotenv import load_dotenv
@@ -23,6 +25,9 @@ TIER_EMOJI = {
     "legendary": "🌟", "epic": "🟣", "rare": "🔵",
     "uncommon": "🟢", "common": "⚪",
 }
+
+# 出現時需要特別通知的稀有 Tier
+ALERT_TIERS = {"s", "legendary"}
 
 def tier_emoji(tier: str) -> str:
     return TIER_EMOJI.get(tier.lower(), "▪️")
@@ -73,7 +78,7 @@ def _save(chat_id: int):
 
 def _fmt_time(ts: int) -> str:
     try:
-        return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone().strftime("%H:%M:%S")
+        return datetime.fromtimestamp(ts, tz=TZ_UTC8).strftime("%H:%M:%S")
     except Exception:
         return "—"
 
@@ -82,7 +87,7 @@ def _fmt_ts_label(ts: int) -> str:
     if not ts:
         return "全部歷史"
     try:
-        return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
+        return datetime.fromtimestamp(ts, tz=TZ_UTC8).strftime("%Y-%m-%d %H:%M (UTC+8)")
     except Exception:
         return "—"
 
@@ -294,8 +299,8 @@ async def setstart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args    = context.args
 
     if not args or args[0].lower() == "now":
-        cutoff = int(datetime.now(tz=timezone.utc).timestamp())
-        label  = datetime.now(tz=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
+        cutoff = int(datetime.now(tz=TZ_UTC8).timestamp())
+        label  = datetime.now(tz=TZ_UTC8).strftime("%Y-%m-%d %H:%M (UTC+8)")
 
     elif args[0].lower() == "all":
         cutoff = 0
@@ -324,11 +329,23 @@ async def setstart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # 以 UTC+8 解析（轉換為 UTC 時間戳）
-        from datetime import timedelta
-        dt_utc8 = dt.replace(tzinfo=timezone(timedelta(hours=8)))
+        # 以 UTC+8 解析
+        dt_utc8 = dt.replace(tzinfo=TZ_UTC8)
         cutoff  = int(dt_utc8.timestamp())
-        label   = dt_utc8.strftime("%Y-%m-%d %H:%M")  + " (UTC+8)"
+        label   = dt_utc8.strftime("%Y-%m-%d %H:%M (UTC+8)")
+
+    # 清除舊的 TG 訊息，避免和新訊息混淆
+    if chat_id in _state:
+        for gacha_key in ("omega", "renacrypt"):
+            old_msg_id = _state[chat_id].get(gacha_key, {}).get("message_id")
+            if old_msg_id:
+                try:
+                    await context.bot.edit_message_text(
+                        f"🔄 起點已重設，請查看最新訊息。",
+                        chat_id, old_msg_id,
+                    )
+                except TelegramError:
+                    pass
 
     # 重置狀態
     _state.pop(chat_id, None)
@@ -383,6 +400,16 @@ async def reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 停止 job
         for job in context.job_queue.get_jobs_by_name(str(chat_id)):
             job.schedule_removal()
+
+        # 清除舊的 TG 訊息
+        if chat_id in _state:
+            for gacha_key in ("omega", "renacrypt"):
+                old_msg_id = _state[chat_id].get(gacha_key, {}).get("message_id")
+                if old_msg_id:
+                    try:
+                        await context.bot.delete_message(chat_id, old_msg_id)
+                    except TelegramError:
+                        pass
 
         # 清除狀態
         _state.pop(chat_id, None)
