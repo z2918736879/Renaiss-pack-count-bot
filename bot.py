@@ -18,6 +18,7 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 POLL_INTERVAL = 15  # 秒（太短容易被網站限流）
+LOOKBACK_SECONDS = 120  # 重抓過去 N 秒，確保 API 延遲的資料不漏抓
 
 # ── Tier Emoji ─────────────────────────────────────────────────────────────────
 TIER_EMOJI = {
@@ -253,7 +254,7 @@ async def _poll_one(bot, chat_id: int, gacha_key: str):
 
     else:
         # 只抓比 last_timestamp 更新的 pull，且不得早於 cutoff_timestamp
-        stop_ts = max(gs["last_timestamp"], gs.get("cutoff_timestamp", 0))
+        stop_ts = max(gs["last_timestamp"] - LOOKBACK_SECONDS, gs.get("cutoff_timestamp", 0))
         new_pulls = await fetch_new_pulls(gacha_key, stop_at_timestamp=stop_ts)
 
         # 過濾已見過的（避免重複）
