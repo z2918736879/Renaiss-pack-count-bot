@@ -89,7 +89,7 @@ def _get(chat_id: int, gacha_key: str) -> dict:
 def _save(chat_id: int):
     if chat_id not in _state:
         return
-    save_state(_state[chat_id])
+    save_state(chat_id, _state[chat_id])
 
 
 def _update_gap_and_recent(gacha_key: str, gs: dict, pulls_oldest_first: list):
@@ -317,7 +317,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         job.schedule_removal()
 
     # 載入存檔（若有）
-    saved = load_state()
+    saved = load_state(chat_id)
     _state[chat_id] = {
         key: _init_gacha_state(key, saved.get(key))
         for key in ("omega", "renacrypt")
@@ -426,7 +426,7 @@ async def setstart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 重置狀態
     _state.pop(chat_id, None)
-    delete_state()
+    delete_state(chat_id)
     _state[chat_id] = {
         key: _init_gacha_state(key, {"cutoff_timestamp": cutoff})
         for key in ("omega", "renacrypt")
@@ -490,7 +490,7 @@ async def reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 清除狀態
         _state.pop(chat_id, None)
-        delete_state()
+        delete_state(chat_id)
 
         await query.edit_message_text(
             "🗑 <b>資料已清除！</b>\n\n"
