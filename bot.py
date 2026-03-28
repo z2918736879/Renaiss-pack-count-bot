@@ -17,8 +17,8 @@ from state_manager import load_state, save_state, delete_state
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-POLL_INTERVAL = 15  # 秒（太短容易被網站限流）
-LOOKBACK_SECONDS = 30  # 重抓過去 N 秒，確保 API 延遲的資料不漏抓
+POLL_INTERVAL = 10  # 秒（太短容易被網站限流）
+VERIFY_INTERVAL = 300  # 每 5 分鐘做一次全量校驗
 
 # ── Tier Emoji ─────────────────────────────────────────────────────────────────
 TIER_EMOJI = {
@@ -254,7 +254,7 @@ async def _poll_one(bot, chat_id: int, gacha_key: str):
 
     else:
         # 只抓比 last_timestamp 更新的 pull，且不得早於 cutoff_timestamp
-        stop_ts = max(gs["last_timestamp"] - LOOKBACK_SECONDS, gs.get("cutoff_timestamp", 0))
+        stop_ts = max(gs["last_timestamp"], gs.get("cutoff_timestamp", 0))
         new_pulls = await fetch_new_pulls(gacha_key, stop_at_timestamp=stop_ts)
 
         # 過濾已見過的（避免重複）
@@ -308,13 +308,80 @@ async def _poll_all(context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ── 定期全量校驗 ──────────────────────────────────────────────────────────────
+
+async def _verify_one(bot, chat_id: int, gacha_key: str):
+    """從 cutoff_timestamp 全量抓取，比對並修正漏抓。"""
+    gs  = _get(chat_id, gacha_key)
+    cfg = GACHA_CONFIG[gacha_key]
+
+    if not gs["initialized"]:
+        return  # 尚未初始化，跳過校驗
+
+    all_pulls = await fetch_new_pulls(gacha_key, stop_at_timestamp=gs["cutoff_timestamp"])
+    if all_pulls is None:
+        print(f"[{gacha_key}] 校驗失敗：無法抓取資料")
+        return
+
+    # 重新計算 tier_counts
+    new_counts = {t: 0 for t in cfg["tiers"]}
+    for p in all_pulls:
+        for t in cfg["tiers"]:
+            if p.get("tier", "").lower() == t.lower():
+                new_counts[t] += 1
+                break
+
+    old_total = sum(gs["tier_counts"].get(t, 0) for t in cfg["tiers"])
+    new_total = sum(new_counts.values())
+
+    if old_total == new_total:
+        print(f"[{gacha_key}] 校驗通過 ✅（{new_total} 筆）")
+        return
+
+    diff = new_total - old_total
+    print(f"[{gacha_key}] 校驗發現差異 ⚠️：舊={old_total}，新={new_total}（差 {diff:+d}），正在修正...")
+
+    # 修正 tier_counts
+    gs["tier_counts"] = new_counts
+
+    # 重建 seen_ids
+    gs["seen_ids"] = {p.get("id", "") for p in all_pulls}
+
+    # 更新 last_timestamp
+    if all_pulls:
+        gs["last_timestamp"] = all_pulls[0]["pulledAtTimestamp"]
+
+    # 重建 gap_tracker & recent_pulls
+    gs["gap_tracker"] = {
+        st: {"since_last": 0, "last_interval": None, "count": 0}
+        for st in SPECIAL_TIERS.get(gacha_key, [])
+    }
+    gs["recent_pulls"] = []
+    _update_gap_and_recent(gacha_key, gs, list(reversed(all_pulls)))
+
+    # 標記需要更新訊息
+    gs["new_pulls"] = []
+    gs["_init_complete"] = True
+
+    _save(chat_id)
+    print(f"[{gacha_key}] 校驗修正完成 ✅（{new_total} 筆）")
+
+
+async def _verify_all(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.job.data["chat_id"]
+    print(f"[verify] 開始全量校驗 (chat_id={chat_id})...")
+    await _verify_one(context.bot, chat_id, "omega")
+    await _verify_one(context.bot, chat_id, "renacrypt")
+
+
 # ── 指令 ──────────────────────────────────────────────────────────────────────
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
-    # 停止舊 job
-    for job in context.job_queue.get_jobs_by_name(str(chat_id)):
+    # 停止舊 job（poll + verify）
+    for job in (context.job_queue.get_jobs_by_name(str(chat_id))
+                + context.job_queue.get_jobs_by_name(f"verify_{chat_id}")):
         job.schedule_removal()
 
     # 載入存檔（若有）
@@ -356,11 +423,21 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name=str(chat_id),
         data={"chat_id": chat_id},
     )
+    context.job_queue.run_repeating(
+        _verify_all,
+        interval=VERIFY_INTERVAL,
+        first=VERIFY_INTERVAL,
+        name=f"verify_{chat_id}",
+        data={"chat_id": chat_id},
+    )
 
 
 async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    jobs = context.job_queue.get_jobs_by_name(str(chat_id))
+    jobs = (
+        context.job_queue.get_jobs_by_name(str(chat_id))
+        + context.job_queue.get_jobs_by_name(f"verify_{chat_id}")
+    )
     if jobs:
         for job in jobs:
             job.schedule_removal()
@@ -438,14 +515,22 @@ async def setstart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for key in ("omega", "renacrypt")
     }
 
-    # 重啟 job
-    for job in context.job_queue.get_jobs_by_name(str(chat_id)):
+    # 重啟 job（poll + verify）
+    for job in (context.job_queue.get_jobs_by_name(str(chat_id))
+                + context.job_queue.get_jobs_by_name(f"verify_{chat_id}")):
         job.schedule_removal()
     context.job_queue.run_repeating(
         _poll_all,
         interval=POLL_INTERVAL,
         first=1,
         name=str(chat_id),
+        data={"chat_id": chat_id},
+    )
+    context.job_queue.run_repeating(
+        _verify_all,
+        interval=VERIFY_INTERVAL,
+        first=VERIFY_INTERVAL,
+        name=f"verify_{chat_id}",
         data={"chat_id": chat_id},
     )
 

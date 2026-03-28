@@ -24,7 +24,7 @@ GACHA_CONFIG = {
 PAGE_LIMIT = 30
 MAX_RETRIES = 5       # 每頁最多重試次數
 RETRY_DELAY = 3       # 一般錯誤重試間隔（秒）
-PAGE_DELAY  = 2       # 每頁之間的間隔（秒），降低被限流機率
+PAGE_DELAY  = 1       # 每頁之間的間隔（秒），降低被限流機率
 
 HEADERS = {
     "User-Agent": (
