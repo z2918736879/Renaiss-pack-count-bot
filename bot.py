@@ -29,6 +29,12 @@ TIER_EMOJI = {
 # 出現時需要特別通知的稀有 Tier
 ALERT_TIERS = {"s", "legendary"}
 
+# 需要追蹤兩次間距的特殊 Tier（依卡機）
+SPECIAL_TIERS = {
+    "omega":     ["S", "A"],
+    "renacrypt": ["Legendary", "Epic"],
+}
+
 def tier_emoji(tier: str) -> str:
     return TIER_EMOJI.get(tier.lower(), "▪️")
 
@@ -47,16 +53,28 @@ def tier_emoji(tier: str) -> str:
 _state: dict = {}
 
 
-def _init_gacha_state(saved: dict = None) -> dict:
+def _init_gacha_state(gacha_key: str, saved: dict = None) -> dict:
     s = saved or {}
+    # 恢復特殊 Tier 間隔追蹤（若有存檔）
+    saved_gt = s.get("gap_tracker", {})
+    gap_tracker = {
+        st: {
+            "since_last":    saved_gt.get(st, {}).get("since_last", 0),
+            "last_interval": saved_gt.get(st, {}).get("last_interval"),
+            "count":         saved_gt.get(st, {}).get("count", 0),
+        }
+        for st in SPECIAL_TIERS.get(gacha_key, [])
+    }
     return {
         "tier_counts":      s.get("tier_counts", {}),
         "last_timestamp":   s.get("last_timestamp", 0),
         "cutoff_timestamp": s.get("cutoff_timestamp", 0),
-        "seen_ids":         set(),
+        "seen_ids":         set(s.get("seen_ids", [])),   # 從存檔恢復，避免重啟後重複計算
+        "recent_pulls":     s.get("recent_pulls", []),
+        "gap_tracker":      gap_tracker,
         "new_pulls":        [],
         "message_id":       s.get("message_id"),
-        "initialized":      bool(s.get("tier_counts")),  # 有存檔就算初始化過
+        "initialized":      bool(s.get("tier_counts")),   # 有存檔就算初始化過
     }
 
 
@@ -64,7 +82,7 @@ def _get(chat_id: int, gacha_key: str) -> dict:
     if chat_id not in _state:
         _state[chat_id] = {}
     if gacha_key not in _state[chat_id]:
-        _state[chat_id][gacha_key] = _init_gacha_state()
+        _state[chat_id][gacha_key] = _init_gacha_state(gacha_key)
     return _state[chat_id][gacha_key]
 
 
@@ -72,6 +90,31 @@ def _save(chat_id: int):
     if chat_id not in _state:
         return
     save_state(_state[chat_id])
+
+
+def _update_gap_and_recent(gacha_key: str, gs: dict, pulls_oldest_first: list):
+    """
+    以時間升序處理 pulls，更新：
+    - gap_tracker：各特殊 Tier 距上次張數 & 上兩次之間隔
+    - recent_pulls：保留最新 5 張（newest first）
+    """
+    gt = gs["gap_tracker"]
+    special_tiers = SPECIAL_TIERS.get(gacha_key, [])
+
+    for p in pulls_oldest_first:
+        tier = p.get("tier", "")
+        for st in special_tiers:
+            if tier.lower() == st.lower():
+                # 命中特殊 Tier：若已出現過，記錄本次與上次的間距
+                if gt[st]["count"] >= 1:
+                    gt[st]["last_interval"] = gt[st]["since_last"]
+                gt[st]["since_last"] = 0
+                gt[st]["count"] += 1
+            else:
+                gt[st]["since_last"] += 1
+
+    # 新的 pulls 放在最前（newest first），保留最新 5 張
+    gs["recent_pulls"] = (list(reversed(pulls_oldest_first)) + gs["recent_pulls"])[:5]
 
 
 # ── 訊息建構 ───────────────────────────────────────────────────────────────────
@@ -97,6 +140,7 @@ def build_message(gacha_key: str, gs: dict) -> str:
     tiers = cfg["tiers"]
     counts = gs["tier_counts"]
     new_pulls = gs["new_pulls"]
+    recent_pulls = gs.get("recent_pulls") or []
     total = sum(counts.get(t, 0) for t in tiers)
     new_count = len(new_pulls)
 
@@ -121,7 +165,10 @@ def build_message(gacha_key: str, gs: dict) -> str:
         lines.append(f"本次新增：{summary}")
         lines.append("")
 
-        for p in new_pulls[:20]:
+    # 最近 5 張記錄（持續顯示，無論有無新卡）
+    if recent_pulls:
+        lines.append("📋 <b>最近記錄</b>")
+        for p in recent_pulls[:5]:
             t   = p.get("tier", "?")
             fmv = parse_fmv(p.get("fmv", ""))
             psa = extract_psa(p.get("frontImageUrl", ""))
@@ -130,6 +177,26 @@ def build_message(gacha_key: str, gs: dict) -> str:
                 f"{tier_emoji(t)} <b>Tier {t.upper()}</b> — {fmv}"
                 f"   <code>{psa}</code>   <i>{ts}</i>"
             )
+        lines.append("")
+
+    # 特殊 Tier 間隔
+    gt = gs.get("gap_tracker", {})
+    special_tiers = SPECIAL_TIERS.get(gacha_key, [])
+    if gt and special_tiers:
+        lines.append("📏 <b>特殊卡間隔</b>")
+        for st in special_tiers:
+            info = gt.get(st, {})
+            count    = info.get("count", 0)
+            since    = info.get("since_last", 0)
+            last_iv  = info.get("last_interval")
+            if count == 0:
+                lines.append(f"{tier_emoji(st)} {st} Tier　尚未出現")
+            else:
+                iv_str = f"<b>{last_iv}</b> 張" if last_iv is not None else "—"
+                lines.append(
+                    f"{tier_emoji(st)} {st} Tier　"
+                    f"距上次 <b>{since}</b> 張　｜　兩次間隔 {iv_str}"
+                )
         lines.append("")
 
     # 累計統計
@@ -176,6 +243,10 @@ async def _poll_one(bot, chat_id: int, gacha_key: str):
         gs["last_timestamp"] = all_pulls[0]["pulledAtTimestamp"] if all_pulls else gs["cutoff_timestamp"]
         gs["new_pulls"]      = []
         gs["initialized"]    = True
+
+        # 建立特殊 Tier 間隔追蹤 & 最近 5 張記錄（oldest-first 處理）
+        _update_gap_and_recent(gacha_key, gs, list(reversed(all_pulls)))
+
         print(f"[{gacha_key}] 初始化完成，共 {sum(gs['tier_counts'].values())} 筆")
         _save(chat_id)
 
@@ -197,6 +268,10 @@ async def _poll_one(bot, chat_id: int, gacha_key: str):
                         break
             gs["last_timestamp"] = new_pulls[0]["pulledAtTimestamp"]
             gs["new_pulls"] = new_pulls
+
+            # 更新特殊 Tier 間隔追蹤 & 最近 5 張記錄（oldest-first 處理）
+            _update_gap_and_recent(gacha_key, gs, list(reversed(new_pulls)))
+
             _save(chat_id)
         else:
             gs["new_pulls"] = []
@@ -243,7 +318,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 載入存檔（若有）
     saved = load_state()
     _state[chat_id] = {
-        key: _init_gacha_state(saved.get(key))
+        key: _init_gacha_state(key, saved.get(key))
         for key in ("omega", "renacrypt")
     }
 
@@ -352,7 +427,7 @@ async def setstart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _state.pop(chat_id, None)
     delete_state()
     _state[chat_id] = {
-        key: _init_gacha_state({"cutoff_timestamp": cutoff})
+        key: _init_gacha_state(key, {"cutoff_timestamp": cutoff})
         for key in ("omega", "renacrypt")
     }
 

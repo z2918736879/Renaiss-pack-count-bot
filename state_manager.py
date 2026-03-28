@@ -38,6 +38,9 @@ def save_state(state: dict):
                 "last_timestamp":    gs.get("last_timestamp", 0),
                 "cutoff_timestamp":  gs.get("cutoff_timestamp", 0),
                 "message_id":        gs.get("message_id"),
+                "seen_ids":          list(gs.get("seen_ids", set())),
+                "recent_pulls":      gs.get("recent_pulls", []),
+                "gap_tracker":       gs.get("gap_tracker", {}),
             }
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f, ensure_ascii=False, indent=2)

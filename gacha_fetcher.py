@@ -89,7 +89,7 @@ async def fetch_new_pulls(
 
                     for pull in page:
                         ts = pull.get("pulledAtTimestamp", 0)
-                        if stop_at_timestamp and ts <= stop_at_timestamp:
+                        if stop_at_timestamp and ts < stop_at_timestamp:
                             done = True   # 已到舊資料，停止
                             break
                         new_pulls.append(pull)
