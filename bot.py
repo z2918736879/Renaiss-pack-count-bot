@@ -18,7 +18,7 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 POLL_INTERVAL = 15  # 秒（太短容易被網站限流）
-LOOKBACK_SECONDS = 120  # 重抓過去 N 秒，確保 API 延遲的資料不漏抓
+LOOKBACK_SECONDS = 30  # 重抓過去 N 秒，確保 API 延遲的資料不漏抓
 
 # ── Tier Emoji ─────────────────────────────────────────────────────────────────
 TIER_EMOJI = {
