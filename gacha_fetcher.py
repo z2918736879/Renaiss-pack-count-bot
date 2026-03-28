@@ -22,6 +22,9 @@ GACHA_CONFIG = {
 }
 
 PAGE_LIMIT = 30
+MAX_RETRIES = 5       # 每頁最多重試次數
+RETRY_DELAY = 3       # 一般錯誤重試間隔（秒）
+PAGE_DELAY  = 2       # 每頁之間的間隔（秒），降低被限流機率
 
 HEADERS = {
     "User-Agent": (
@@ -59,55 +62,66 @@ async def fetch_new_pulls(
     offset = 0
     done = False
 
+    body_template = {
+        "cardPackId": cfg["cardPackId"],
+        "limit": PAGE_LIMIT,
+    }
+
     async with aiohttp.ClientSession() as session:
         while not done:
-            body = json.dumps([{
-                "cardPackId": cfg["cardPackId"],
-                "limit": PAGE_LIMIT,
-                "offset": offset,
-            }])
+            body = json.dumps([{**body_template, "offset": offset}])
+            page = None
 
-            try:
-                async with session.post(
-                    cfg["url"], headers=action_headers, data=body,
-                    timeout=aiohttp.ClientTimeout(total=20),
-                ) as resp:
-                    if resp.status == 429:
-                        wait = int(resp.headers.get("Retry-After", 60))
-                        print(f"[{gacha_key}] 被限流，等待 {wait} 秒...")
-                        await asyncio.sleep(wait)
-                        break
-                    if resp.status != 200:
-                        print(f"[{gacha_key}] HTTP {resp.status}")
-                        break
+            # ── 單頁抓取，失敗自動重試 ──────────────────────────────
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    async with session.post(
+                        cfg["url"], headers=action_headers, data=body,
+                        timeout=aiohttp.ClientTimeout(total=20),
+                    ) as resp:
+                        if resp.status == 429:
+                            wait = int(resp.headers.get("Retry-After", 60))
+                            print(f"[{gacha_key}] 被限流，等待 {wait} 秒後重試 ({attempt}/{MAX_RETRIES})...")
+                            await asyncio.sleep(wait)
+                            continue  # 同一頁重試
+                        if resp.status != 200:
+                            print(f"[{gacha_key}] HTTP {resp.status}，重試 ({attempt}/{MAX_RETRIES})...")
+                            await asyncio.sleep(RETRY_DELAY)
+                            continue  # 同一頁重試
+                        raw = await resp.text(encoding="utf-8", errors="replace")
+                        page = _parse_rsc_stream(raw)
+                        break  # 成功，離開重試迴圈
+                except Exception as e:
+                    print(f"[{gacha_key}] 請求失敗 offset={offset} ({attempt}/{MAX_RETRIES}): {e}")
+                    if attempt < MAX_RETRIES:
+                        await asyncio.sleep(RETRY_DELAY)
 
-                    raw = await resp.text(encoding="utf-8", errors="replace")
-                    page = _parse_rsc_stream(raw)
-
-                    if not page:
-                        break
-
-                    for pull in page:
-                        ts = pull.get("pulledAtTimestamp", 0)
-                        if stop_at_timestamp and ts < stop_at_timestamp:
-                            done = True   # 已到舊資料，停止
-                            break
-                        new_pulls.append(pull)
-
-                    fetched = len(new_pulls)
-                    print(
-                        f"[{gacha_key}] offset={offset} → {len(page)} 筆"
-                        + (f"，累計新增 {fetched} 筆" if stop_at_timestamp else f"，累計 {fetched} 筆")
-                    )
-
-                    if done or len(page) < PAGE_LIMIT:
-                        break
-
-                    offset += PAGE_LIMIT
-
-            except Exception as e:
-                print(f"[{gacha_key}] 請求失敗 offset={offset}: {e}")
+            # ── 重試耗盡仍失敗，停止分頁 ────────────────────────────
+            if page is None:
+                print(f"[{gacha_key}] offset={offset} 重試 {MAX_RETRIES} 次仍失敗，停止抓取")
                 break
+
+            if not page:
+                break  # 空頁，已到底
+
+            for pull in page:
+                ts = pull.get("pulledAtTimestamp", 0)
+                if stop_at_timestamp and ts < stop_at_timestamp:
+                    done = True   # 已到舊資料，停止
+                    break
+                new_pulls.append(pull)
+
+            fetched = len(new_pulls)
+            print(
+                f"[{gacha_key}] offset={offset} → {len(page)} 筆"
+                + (f"，累計新增 {fetched} 筆" if stop_at_timestamp else f"，累計 {fetched} 筆")
+            )
+
+            if done or len(page) < PAGE_LIMIT:
+                break
+
+            offset += PAGE_LIMIT
+            await asyncio.sleep(PAGE_DELAY)  # 翻頁前稍作等待，避免觸發限流
 
     return new_pulls
 
