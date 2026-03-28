@@ -246,6 +246,7 @@ async def _poll_one(bot, chat_id: int, gacha_key: str):
 
         # 建立特殊 Tier 間隔追蹤 & 最近 5 張記錄（oldest-first 處理）
         _update_gap_and_recent(gacha_key, gs, list(reversed(all_pulls)))
+        gs["_init_complete"] = True  # 通知下一輪 poll 強制更新訊息
 
         print(f"[{gacha_key}] 初始化完成，共 {sum(gs['tier_counts'].values())} 筆")
         _save(chat_id)
@@ -287,7 +288,7 @@ async def _poll_one(bot, chat_id: int, gacha_key: str):
             )
             gs["message_id"] = msg.message_id
             _save(chat_id)
-        elif gs["new_pulls"]:
+        elif gs["new_pulls"] or gs.pop("_init_complete", False):
             await bot.edit_message_text(
                 text, chat_id, gs["message_id"],
                 parse_mode=ParseMode.HTML,
