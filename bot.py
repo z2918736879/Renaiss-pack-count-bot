@@ -323,6 +323,11 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for key in ("omega", "renacrypt")
     }
 
+    # 重置 message_id：讓第一次 poll 強制發送新看板，而非等到有新卡才顯示
+    if saved:
+        for key in ("omega", "renacrypt"):
+            _state[chat_id][key]["message_id"] = None
+
     if saved:
         omega_total     = sum(_state[chat_id]["omega"]["tier_counts"].values())
         renacrypt_total = sum(_state[chat_id]["renacrypt"]["tier_counts"].values())
