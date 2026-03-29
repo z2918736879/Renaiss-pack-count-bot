@@ -1,9 +1,9 @@
-專門 RenaCrypt Pack & OMEGA Pack 設計的抽卡計數器。
+**專門 RenaCrypt Pack & OMEGA Pack 設計的抽卡計數器**
 
-/Start　　直接抓取所有歷史數據
-/Stop　　 停止；數據會擷取至停止當下
-/Reset　 清除當前儲存數據
-/Setstart　從輸入日期和時間開始擷取數據，例如 2026-03-28 12:00（時間統一為 UTC+8，可直接輸入）
+Start　　直接抓取所有歷史數據
+Stop　　 停止；數據會擷取至停止當下
+Reset　 清除當前儲存數據
+Setstart　從輸入日期和時間開始擷取數據，例如 2026-03-28 12:00（時間統一為 UTC+8，可直接輸入）
 <img width="970" height="160" alt="image" src="https://github.com/user-attachments/assets/306e9837-1fbe-4997-9500-59ee9d2afa20" />
 
 
