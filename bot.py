@@ -224,14 +224,13 @@ def build_message(gacha_key: str, gs: dict) -> str:
 
 async def _send_alert(bot, chat_id: int, gacha_key: str, pull: dict):
     """對單張稀有卡發送獨立通知（含圖片）。"""
-    cfg   = GACHA_CONFIG[gacha_key]
-    tier  = pull.get("tier", "?")
-    fmv   = parse_fmv(pull.get("fmv", ""))
-    psa   = extract_psa(pull.get("frontImageUrl", ""))
-    ts    = _fmt_time(pull.get("pulledAtTimestamp", 0))
-    emoji = tier_emoji(tier)
-    img   = pull.get("frontImageUrl", "")
-
+    cfg       = GACHA_CONFIG[gacha_key]
+    tier      = pull.get("tier", "?")
+    fmv       = parse_fmv(pull.get("fmv", ""))
+    psa       = extract_psa(pull.get("frontImageUrl", ""))
+    ts        = _fmt_time(pull.get("pulledAtTimestamp", 0))
+    emoji     = tier_emoji(tier)
+    img       = pull.get("frontImageUrl", "")
     caption = (
         f"{emoji} <b>{tier.upper()} 出現了！</b>  [{cfg['emoji']} {gacha_key.upper()}]\n\n"
         f"🏷 PSA：<code>{psa}</code>\n"
@@ -318,10 +317,12 @@ async def _poll_one(bot, chat_id: int, gacha_key: str):
         else:
             gs["new_pulls"] = []
 
-    # 發送或更新 TG 訊息
+    # 發送或更新 TG 訊息（有新卡時：刪舊訊息 + 發新訊息，讓看板保持在最底部）
     text = build_message(gacha_key, gs)
+    should_refresh = gs["new_pulls"] or gs.pop("_init_complete", False)
     try:
         if gs["message_id"] is None:
+            # 第一次發送
             msg = await bot.send_message(
                 chat_id, text,
                 parse_mode=ParseMode.HTML,
@@ -329,15 +330,21 @@ async def _poll_one(bot, chat_id: int, gacha_key: str):
             )
             gs["message_id"] = msg.message_id
             _save(chat_id)
-        elif gs["new_pulls"] or gs.pop("_init_complete", False):
-            await bot.edit_message_text(
-                text, chat_id, gs["message_id"],
+        elif should_refresh:
+            # 刪除舊訊息，發送新訊息，讓看板置底
+            try:
+                await bot.delete_message(chat_id, gs["message_id"])
+            except TelegramError:
+                pass  # 訊息已不存在，忽略
+            msg = await bot.send_message(
+                chat_id, text,
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
             )
+            gs["message_id"] = msg.message_id
+            _save(chat_id)
     except TelegramError as e:
-        if "message is not modified" not in str(e):
-            print(f"[{gacha_key}] TG Error: {e}")
+        print(f"[{gacha_key}] TG Error: {e}")
 
 
 async def _poll_all(context: ContextTypes.DEFAULT_TYPE):
