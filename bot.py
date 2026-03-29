@@ -302,10 +302,8 @@ async def _poll_one(bot, chat_id: int, gacha_key: str):
 
 async def _poll_all(context: ContextTypes.DEFAULT_TYPE):
     chat_id = context.job.data["chat_id"]
-    await asyncio.gather(
-        _poll_one(context.bot, chat_id, "omega"),
-        _poll_one(context.bot, chat_id, "renacrypt"),
-    )
+    await _poll_one(context.bot, chat_id, "omega")
+    await _poll_one(context.bot, chat_id, "renacrypt")
 
 
 # ── 定期全量校驗 ──────────────────────────────────────────────────────────────
