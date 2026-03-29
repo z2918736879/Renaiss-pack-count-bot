@@ -18,8 +18,7 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 POLL_INTERVAL = 10      # 秒（太短容易被網站限流）
-VERIFY_INTERVAL = 300   # 每 5 分鐘做一次全量校驗
-MAX_MONITOR_PAGES = 3   # 監控模式每次最多抓幾頁（3頁=90筆），防止大量湧入時拖慢更新
+VERIFY_INTERVAL = 75    # 每 75 秒做一次全量校驗
 
 # ── Tier Emoji ─────────────────────────────────────────────────────────────────
 TIER_EMOJI = {
@@ -290,7 +289,7 @@ async def _poll_one(bot, chat_id: int, gacha_key: str):
     else:
         # 只抓比 last_timestamp 更新的 pull，且不得早於 cutoff_timestamp
         stop_ts = max(gs["last_timestamp"], gs.get("cutoff_timestamp", 0))
-        new_pulls = await fetch_new_pulls(gacha_key, stop_at_timestamp=stop_ts, max_pages=MAX_MONITOR_PAGES)
+        new_pulls = await fetch_new_pulls(gacha_key, stop_at_timestamp=stop_ts)
 
         # 過濾已見過的（避免重複）
         new_pulls = [p for p in new_pulls if p.get("id") not in gs["seen_ids"]]
