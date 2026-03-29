@@ -449,7 +449,7 @@ def _start_jobs(job_queue, chat_id: int):
     job_queue.run_repeating(
         _poll_renacrypt,
         interval=POLL_INTERVAL,
-        first=4,  # 錯開 3 秒，避免與 Omega 同時發請求觸發限流
+        first=3,  # 錯開 2 秒，避免與 Omega 同時發請求觸發限流
         name=f"renacrypt_{chat_id}",
         data=data,
     )
