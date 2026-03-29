@@ -24,7 +24,7 @@ GACHA_CONFIG = {
 PAGE_LIMIT = 30
 MAX_RETRIES = 5       # 每頁最多重試次數
 RETRY_DELAY = 3       # 一般錯誤重試間隔（秒）
-PAGE_DELAY  = 1       # 每頁之間的間隔（秒），降低被限流機率
+PAGE_DELAY  = 0.5     # 每頁之間的間隔（秒），降低被限流機率
 
 HEADERS = {
     "User-Agent": (
@@ -41,11 +41,13 @@ HEADERS = {
 async def fetch_new_pulls(
     gacha_key: str,
     stop_at_timestamp: int = 0,
+    max_pages: int = None,
 ) -> list:
     """
     只抓 stop_at_timestamp 之後的新 pull。
     pulls 按時間降序排列（最新在前），遇到舊資料就停止分頁。
     stop_at_timestamp=0 代表抓全部歷史。
+    max_pages 限制最多抓幾頁（None = 不限制）。
     """
     cfg = GACHA_CONFIG[gacha_key]
     action_headers = {
@@ -61,6 +63,7 @@ async def fetch_new_pulls(
     new_pulls: list = []
     offset = 0
     done = False
+    pages_fetched = 0
 
     body_template = {
         "cardPackId": cfg["cardPackId"],
@@ -117,7 +120,10 @@ async def fetch_new_pulls(
                 + (f"，累計新增 {fetched} 筆" if stop_at_timestamp else f"，累計 {fetched} 筆")
             )
 
+            pages_fetched += 1
             if done or len(page) < PAGE_LIMIT:
+                break
+            if max_pages is not None and pages_fetched >= max_pages:
                 break
 
             offset += PAGE_LIMIT
