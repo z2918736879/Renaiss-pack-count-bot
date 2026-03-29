@@ -303,6 +303,7 @@ async def _poll_one(bot, chat_id: int, gacha_key: str):
 async def _poll_all(context: ContextTypes.DEFAULT_TYPE):
     chat_id = context.job.data["chat_id"]
     await _poll_one(context.bot, chat_id, "omega")
+    await asyncio.sleep(2)  # 間隔 2 秒，避免連續請求觸發限流
     await _poll_one(context.bot, chat_id, "renacrypt")
 
 
@@ -369,6 +370,7 @@ async def _verify_all(context: ContextTypes.DEFAULT_TYPE):
     chat_id = context.job.data["chat_id"]
     print(f"[verify] 開始全量校驗 (chat_id={chat_id})...")
     await _verify_one(context.bot, chat_id, "omega")
+    await asyncio.sleep(3)  # 校驗資料量大，間隔久一點避免限流
     await _verify_one(context.bot, chat_id, "renacrypt")
 
 

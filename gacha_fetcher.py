@@ -80,7 +80,7 @@ async def fetch_new_pulls(
                         timeout=aiohttp.ClientTimeout(total=20),
                     ) as resp:
                         if resp.status == 429:
-                            wait = int(resp.headers.get("Retry-After", 60))
+                            wait = min(int(resp.headers.get("Retry-After", 5)), 10)
                             print(f"[{gacha_key}] 被限流，等待 {wait} 秒後重試 ({attempt}/{MAX_RETRIES})...")
                             await asyncio.sleep(wait)
                             continue  # 同一頁重試
