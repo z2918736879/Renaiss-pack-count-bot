@@ -28,7 +28,7 @@ TIER_EMOJI = {
 }
 
 # 出現時需要特別通知的稀有 Tier
-ALERT_TIERS = {"s", "legendary"}
+ALERT_TIERS = {"s", "legendary", "epic"}
 
 # 需要追蹤兩次間距的特殊 Tier（依卡機）
 SPECIAL_TIERS = {
@@ -220,6 +220,41 @@ def build_message(gacha_key: str, gs: dict) -> str:
     return "\n".join(lines)
 
 
+# ── 稀有卡警報 ─────────────────────────────────────────────────────────────────
+
+async def _send_alert(bot, chat_id: int, gacha_key: str, pull: dict):
+    """對單張稀有卡發送獨立通知（含圖片）。"""
+    cfg   = GACHA_CONFIG[gacha_key]
+    tier  = pull.get("tier", "?")
+    fmv   = parse_fmv(pull.get("fmv", ""))
+    psa   = extract_psa(pull.get("frontImageUrl", ""))
+    ts    = _fmt_time(pull.get("pulledAtTimestamp", 0))
+    emoji = tier_emoji(tier)
+    img   = pull.get("frontImageUrl", "")
+
+    caption = (
+        f"{emoji} <b>{tier.upper()} 出現了！</b>  [{cfg['emoji']} {gacha_key.upper()}]\n\n"
+        f"🏷 PSA：<code>{psa}</code>\n"
+        f"💰 FMV：<b>{fmv}</b>\n"
+        f"🕐 時間：<i>{ts}</i>"
+    )
+
+    try:
+        if img:
+            await bot.send_photo(
+                chat_id, img,
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            await bot.send_message(
+                chat_id, caption,
+                parse_mode=ParseMode.HTML,
+            )
+    except TelegramError as e:
+        print(f"[{gacha_key}] Alert 發送失敗: {e}")
+
+
 # ── 輪詢核心 ───────────────────────────────────────────────────────────────────
 
 async def _poll_one(bot, chat_id: int, gacha_key: str):
@@ -275,6 +310,11 @@ async def _poll_one(bot, chat_id: int, gacha_key: str):
             _update_gap_and_recent(gacha_key, gs, list(reversed(new_pulls)))
 
             _save(chat_id)
+
+            # 稀有卡警報（oldest-first，依序推送）
+            for p in reversed(new_pulls):
+                if p.get("tier", "").lower() in ALERT_TIERS:
+                    await _send_alert(bot, chat_id, gacha_key, p)
         else:
             gs["new_pulls"] = []
 
