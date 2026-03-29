@@ -347,10 +347,13 @@ async def _poll_one(bot, chat_id: int, gacha_key: str):
         print(f"[{gacha_key}] TG Error: {e}")
 
 
-async def _poll_all(context: ContextTypes.DEFAULT_TYPE):
+async def _poll_omega(context: ContextTypes.DEFAULT_TYPE):
     chat_id = context.job.data["chat_id"]
     await _poll_one(context.bot, chat_id, "omega")
-    await asyncio.sleep(2)  # 間隔 2 秒，避免連續請求觸發限流
+
+
+async def _poll_renacrypt(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.job.data["chat_id"]
     await _poll_one(context.bot, chat_id, "renacrypt")
 
 
@@ -421,15 +424,51 @@ async def _verify_all(context: ContextTypes.DEFAULT_TYPE):
     await _verify_one(context.bot, chat_id, "renacrypt")
 
 
+# ── Job 管理 ──────────────────────────────────────────────────────────────────
+
+def _job_names(chat_id: int) -> list[str]:
+    return [f"omega_{chat_id}", f"renacrypt_{chat_id}", f"verify_{chat_id}"]
+
+
+def _stop_jobs(job_queue, chat_id: int):
+    for name in _job_names(chat_id):
+        for job in job_queue.get_jobs_by_name(name):
+            job.schedule_removal()
+
+
+def _start_jobs(job_queue, chat_id: int):
+    data = {"chat_id": chat_id}
+    # Omega 和 Renacrypt 各自獨立 job，錯開 5 秒避免同時發請求
+    job_queue.run_repeating(
+        _poll_omega,
+        interval=POLL_INTERVAL,
+        first=1,
+        name=f"omega_{chat_id}",
+        data=data,
+    )
+    job_queue.run_repeating(
+        _poll_renacrypt,
+        interval=POLL_INTERVAL,
+        first=6,  # 錯開 5 秒，避免與 Omega 同時發請求觸發限流
+        name=f"renacrypt_{chat_id}",
+        data=data,
+    )
+    job_queue.run_repeating(
+        _verify_all,
+        interval=VERIFY_INTERVAL,
+        first=VERIFY_INTERVAL,
+        name=f"verify_{chat_id}",
+        data=data,
+    )
+
+
 # ── 指令 ──────────────────────────────────────────────────────────────────────
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
-    # 停止舊 job（poll + verify）
-    for job in (context.job_queue.get_jobs_by_name(str(chat_id))
-                + context.job_queue.get_jobs_by_name(f"verify_{chat_id}")):
-        job.schedule_removal()
+    # 停止舊 job
+    _stop_jobs(context.job_queue, chat_id)
 
     # 載入存檔（若有）
     saved = load_state(chat_id)
@@ -463,28 +502,13 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML,
         )
 
-    context.job_queue.run_repeating(
-        _poll_all,
-        interval=POLL_INTERVAL,
-        first=1,
-        name=str(chat_id),
-        data={"chat_id": chat_id},
-    )
-    context.job_queue.run_repeating(
-        _verify_all,
-        interval=VERIFY_INTERVAL,
-        first=VERIFY_INTERVAL,
-        name=f"verify_{chat_id}",
-        data={"chat_id": chat_id},
-    )
+    _start_jobs(context.job_queue, chat_id)
 
 
 async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    jobs = (
-        context.job_queue.get_jobs_by_name(str(chat_id))
-        + context.job_queue.get_jobs_by_name(f"verify_{chat_id}")
-    )
+    jobs = [j for name in _job_names(chat_id)
+              for j in context.job_queue.get_jobs_by_name(name)]
     if jobs:
         for job in jobs:
             job.schedule_removal()
@@ -562,24 +586,9 @@ async def setstart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for key in ("omega", "renacrypt")
     }
 
-    # 重啟 job（poll + verify）
-    for job in (context.job_queue.get_jobs_by_name(str(chat_id))
-                + context.job_queue.get_jobs_by_name(f"verify_{chat_id}")):
-        job.schedule_removal()
-    context.job_queue.run_repeating(
-        _poll_all,
-        interval=POLL_INTERVAL,
-        first=1,
-        name=str(chat_id),
-        data={"chat_id": chat_id},
-    )
-    context.job_queue.run_repeating(
-        _verify_all,
-        interval=VERIFY_INTERVAL,
-        first=VERIFY_INTERVAL,
-        name=f"verify_{chat_id}",
-        data={"chat_id": chat_id},
-    )
+    # 重啟 job
+    _stop_jobs(context.job_queue, chat_id)
+    _start_jobs(context.job_queue, chat_id)
 
     await update.message.reply_text(
         f"🔄 <b>已重設起點：{label}</b>\n\n"
