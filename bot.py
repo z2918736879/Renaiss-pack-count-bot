@@ -648,7 +648,10 @@ def main():
     app.add_handler(CallbackQueryHandler(reset_callback, pattern="^(confirm|cancel)_reset$"))
 
     print(f"✅  Bot 已啟動（每 {POLL_INTERVAL} 秒輪詢），Ctrl+C 停止")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True
+    )
 
 
 if __name__ == "__main__":
