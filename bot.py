@@ -651,17 +651,30 @@ async def reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── 啟動 ──────────────────────────────────────────────────────────────────────
 
+async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
+    """全域錯誤處理，避免網路超時等例外直接中斷。"""
+    print(f"[error_handler] {context.error}")
+
+
 def main():
     if not TOKEN:
         print("❌  請在 .env 檔案中設定 TELEGRAM_TOKEN")
         return
 
-    app = Application.builder().token(TOKEN).build()
+    app = (
+        Application.builder()
+        .token(TOKEN)
+        .read_timeout(30)
+        .write_timeout(30)
+        .connect_timeout(30)
+        .build()
+    )
     app.add_handler(CommandHandler("start",    start_cmd))
     app.add_handler(CommandHandler("stop",     stop_cmd))
     app.add_handler(CommandHandler("setstart", setstart_cmd))
     app.add_handler(CommandHandler("reset",    reset_cmd))
     app.add_handler(CallbackQueryHandler(reset_callback, pattern="^(confirm|cancel)_reset$"))
+    app.add_error_handler(error_handler)
 
     print(f"✅  Bot 已啟動（每 {POLL_INTERVAL} 秒輪詢），Ctrl+C 停止")
     app.run_polling(
