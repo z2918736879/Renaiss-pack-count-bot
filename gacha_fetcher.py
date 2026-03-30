@@ -10,14 +10,14 @@ GACHA_CONFIG = {
         "tiers": ["S", "A", "B", "C"],
         "emoji": "🔴",
         "cardPackId": "6f6885e6-2ee9-434b-96ea-72d51abae029",
-        "next_action": "c0dd5ad7146cc09c75a0e68e180028358f610b1294",
+        "next_action": "c0627c0b220caefa89eca2bc50bba732e8512cf026",
     },
     "renacrypt": {
         "url": "https://www.renaiss.xyz/gacha/renacrypt-pack",
         "tiers": ["Legendary", "Epic", "Rare", "Uncommon", "Common"],
         "emoji": "🔮",
         "cardPackId": "a42fe06a-ae67-4f20-a275-6b2668e178fb",
-        "next_action": "c0dd5ad7146cc09c75a0e68e180028358f610b1294",
+        "next_action": "c0627c0b220caefa89eca2bc50bba732e8512cf026",
     },
 }
 
